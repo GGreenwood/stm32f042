@@ -4,32 +4,29 @@
 extern crate cortex_m;
 extern crate stm32f042;
 
-use stm32f042::{GPIOB, RCC};
-use cortex_m::interrupt;
-
 fn main() {
-    interrupt::free(|cs| {
-        let rcc = RCC.borrow(cs);
-        let gpiob = GPIOB.borrow(cs);
+    if let Some(p) = stm32f042::Peripherals::take() {
+        let rcc = p.RCC;
+        let gpioa = p.GPIOA;
 
         /* Enable clock for SYSCFG, else everything will behave funky! */
         rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
 
-        /* Enable clock for GPIO Port B */
-        rcc.ahbenr.modify(|_, w| w.iopben().set_bit());
+        /* Enable clock for GPIO Port A */
+        rcc.ahbenr.modify(|_, w| w.iopaen().set_bit());
 
-        /* (Re-)configure PB1 as output */
-        gpiob.moder.modify(|_, w| unsafe { w.moder1().bits(1) });
+        /* (Re-)configure PA1 as output */
+        gpioa.moder.modify(|_, w| unsafe { w.moder1().bits(1) });
 
         loop {
-            /* Turn PB1 on a million times in a row */
+            /* Turn PA1 on a million times in a row */
             for _ in 0..1_000_000 {
-                gpiob.bsrr.write(|w| w.bs1().set_bit());
+                gpioa.bsrr.write(|w| w.bs1().set_bit());
             }
-            /* Then turn PB1 off a million times in a row */
+            /* Then turn PA1 off a million times in a row */
             for _ in 0..1_000_000 {
-                gpiob.brr.write(|w| w.br1().set_bit());
+                gpioa.bsrr.write(|w| w.br1().set_bit());
             }
         }
-    });
+    }
 }

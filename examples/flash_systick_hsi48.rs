@@ -2,23 +2,27 @@
 #![feature(const_fn)]
 #![no_std]
 
+use core::cell::RefCell;
+
 extern crate cortex_m;
+
+use cortex_m::interrupt::Mutex;
+use cortex_m::peripheral::syst::*;
 
 #[macro_use(exception)]
 extern crate stm32f042;
 
-use stm32f042::*;
-
-use self::{GPIOB, RCC, SYST};
-use cortex_m::peripheral::SystClkSource;
-
+static GPIOA: Mutex<RefCell<Option<stm32f042::GPIOA>>> = Mutex::new(RefCell::new(None));
 
 fn main() {
-    cortex_m::interrupt::free(|cs| {
-        let rcc = RCC.borrow(cs);
-        let gpiob = GPIOB.borrow(cs);
-        let syst = SYST.borrow(cs);
-        let flash = FLASH.borrow(cs);
+    if let (Some(cp), Some(p)) = (
+        cortex_m::Peripherals::take(),
+        stm32f042::Peripherals::take(),
+    ) {
+        let rcc = p.RCC;
+        let gpioa = p.GPIOA;
+        let mut syst = cp.SYST;
+        let flash = p.FLASH;
 
         /* Enable clock for SYSCFG, else everything will behave funky! */
         rcc.apb2enr.modify(|_, w| w.syscfgen().set_bit());
@@ -56,11 +60,15 @@ fn main() {
             }
         }
 
-        /* Enable clock for GPIO Port B */
-        rcc.ahbenr.modify(|_, w| w.iopben().set_bit());
+        /* Enable clock for GPIO Port A */
+        rcc.ahbenr.modify(|_, w| w.iopaen().set_bit());
 
-        /*  (Re-)configure PB1 as output */
-        gpiob.moder.modify(|_, w| unsafe { w.moder1().bits(1) });
+        /*  (Re-)configure PA1 as output */
+        gpioa.moder.modify(|_, w| unsafe { w.moder1().bits(1) });
+
+        cortex_m::interrupt::free(|cs| {
+            *GPIOA.borrow(cs).borrow_mut() = Some(gpioa);
+        });
 
         /* Initialise SysTick counter with a defined value */
         unsafe { syst.cvr.write(1) };
@@ -76,9 +84,8 @@ fn main() {
 
         /* Start interrupt generation */
         syst.enable_interrupt();
-    });
+    }
 }
-
 
 /* Define an exception, i.e. function to call when exception occurs. Here if our SysTick timer
  * trips the flash function will be called and the specified stated passed in via argument */
@@ -86,25 +93,24 @@ exception!(SYS_TICK, flash, locals: {
     state: u8 = 1;
 });
 
-
 fn flash(l: &mut SYS_TICK::Locals) {
     /* Enter critical section */
     cortex_m::interrupt::free(|cs| {
-        let gpiob = GPIOB.borrow(cs);
+        if let Some(gpioa) = GPIOA.borrow(cs).borrow().as_ref() {
+            /* Check state variable, keep LED off most of the time and turn it on every 10th tick */
+            if l.state < 10 {
+                /* If set turn off the LED */
+                gpioa.brr.write(|w| w.br1().set_bit());
 
-        /* Check state variable, keep LED off most of the time and turn it on every 10th tick */
-        if l.state < 10 {
-            /* If set turn off the LED */
-            gpiob.brr.write(|w| w.br1().set_bit());
+                /* And now increment state variable */
+                l.state += 1;
+            } else {
+                /* If not set, turn on the LED */
+                gpioa.bsrr.write(|w| w.bs1().set_bit());
 
-            /* And now increment state variable */
-            l.state += 1;
-        } else {
-            /* If not set, turn on the LED */
-            gpiob.bsrr.write(|w| w.bs1().set_bit());
-
-            /* And set new state variable back to 0 */
-            l.state = 1;
+                /* And set new state variable back to 0 */
+                l.state = 1;
+            }
         }
     });
 }
